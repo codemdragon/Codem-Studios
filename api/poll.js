@@ -1,85 +1,69 @@
 /**
  * Codem Studios — Vercel OAuth Bridge
- * Step 3: The TV polls this endpoint every 5 seconds until tokens are ready.
- *
- * Responses:
- *   { status: 'pending' }              — user hasn't signed in yet
- *   { status: 'authorized', tokens: { access_token, refresh_token, expiry_time, ... } }
- *   { status: 'error', message: '...' }
- *
- * Tokens are deleted from Redis on first successful retrieval (one-time pickup).
- *
- * Requires Upstash Redis env vars (set by Vercel integration):
- *   UPSTASH_REDIS_REST_URL
- *   UPSTASH_REDIS_REST_TOKEN
+ * FILENAME: poll.js  →  deploy to /api/poll.js in your repo
+ * Route: /api/poll?session=XXXXXXXX  (TV polls this every 5s)
  */
 
-const REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL;
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+async function redisGet(key) {
+    const url   = process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (!url || !token) throw new Error('Upstash env vars not set');
 
-if (!REDIS_URL || !REDIS_TOKEN) {
-    throw new Error('Missing Upstash Redis env vars. Set up Redis in Vercel Storage.');
+    const res = await fetch(`${url}`, {
+        method:  'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body:    JSON.stringify(['GET', key])
+    });
+
+    if (!res.ok) throw new Error('Redis GET failed: ' + await res.text());
+    const data = await res.json();
+    return data.result; // null if key doesn't exist
+}
+
+async function redisDel(key) {
+    const url   = process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (!url || !token) return; // best-effort, don't throw
+
+    await fetch(`${url}`, {
+        method:  'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body:    JSON.stringify(['DEL', key])
+    }).catch(() => {});
 }
 
 export default async function handler(req, res) {
-    // Allow TV (any origin) to reach this endpoint
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Cache-Control', 'no-store');
 
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (req.method === 'OPTIONS') return res.status(200).end();
 
-    const { session } = req.query;
+    const session = (req.query.session || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-    if (!session || !/^[A-Z0-9]{8}$/i.test(session)) {
+    if (session.length !== 8) {
         return res.status(400).json({ status: 'error', message: 'Invalid session ID' });
     }
 
-    const key = `session:${session.toUpperCase()}`;
+    const key = `session:${session}`;
 
     try {
-        // GET the token from Redis
-        const getResponse = await fetch(`${REDIS_URL}/get/${key}`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${REDIS_TOKEN}`
-            }
-        });
-
-        if (!getResponse.ok) {
-            throw new Error('Redis GET failed: ' + await getResponse.text());
-        }
-
-        const getData = await getResponse.json();
-        const raw = getData.result;
+        const raw = await redisGet(key);
 
         if (!raw) {
-            // Not ready yet — TV should keep polling
             return res.json({ status: 'pending' });
         }
 
-        // Parse the stored JSON
         const tokens = typeof raw === 'string' ? JSON.parse(raw) : raw;
 
-        // One-time retrieval — delete immediately after pickup
-        const delResponse = await fetch(`${REDIS_URL}/del/${key}`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${REDIS_TOKEN}`
-            }
-        });
-
-        if (!delResponse.ok) {
-            console.warn('[poll] Failed to delete session key, but returning tokens anyway');
-        }
+        // Delete after first pickup (one-time use)
+        await redisDel(key);
 
         console.log('[poll] Tokens claimed for session', session);
         return res.json({ status: 'authorized', tokens });
 
     } catch (err) {
-        console.error('[poll] Redis error for session', session, ':', err.message);
-        return res.status(500).json({ status: 'error', message: 'Server error, please retry.' });
+        console.error('[poll] Error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 }
