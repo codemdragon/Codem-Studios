@@ -4,8 +4,8 @@
  * Route: /api/callback  (this is your Google redirect URI)
  */
 
-const CLIENT_ID     = '698198831884-7i3mp6d6s3vnnus7qoje0181iv3pp7ni.apps.googleusercontent.com';
-const CLIENT_SECRET = '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';
+const CLIENT_ID     = process.env.GOOGLE_CLIENT_ID;
+const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const REDIRECT_URI  = 'https://codem-studios.vercel.app/api/callback';
 
 async function redisSet(key, value, exSeconds) {
@@ -33,7 +33,6 @@ export default async function handler(req, res) {
     }
 
     try {
-        // Exchange auth code for tokens
         const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
             method:  'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
