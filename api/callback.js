@@ -9,18 +9,17 @@ const CLIENT_SECRET = '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';
 const REDIRECT_URI  = 'https://codem-studios.vercel.app/api/callback';
 
 async function redisSet(key, value, exSeconds) {
-    const url   = process.env.UPSTASH_REDIS_REST_URL;
-    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-    if (!url || !token) throw new Error('Upstash env vars not set');
+    const url   = process.env.KV_REST_API_URL;
+    const token = process.env.KV_REST_API_TOKEN;
+    if (!url || !token) throw new Error('Vercel KV env vars not set');
 
-    // Upstash REST API: POST body is a Redis command array
     const res = await fetch(url, {
         method:  'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body:    JSON.stringify(['SET', key, value, 'EX', exSeconds])
     });
 
-    if (!res.ok) throw new Error('Redis SET failed: ' + await res.text());
+    if (!res.ok) throw new Error('KV SET failed: ' + await res.text());
 }
 
 export default async function handler(req, res) {
@@ -52,7 +51,7 @@ export default async function handler(req, res) {
 
         tokens.expiry_time = Date.now() + ((tokens.expires_in || 3600) * 1000);
 
-        // Store in Upstash Redis — 10 min TTL
+        // Store in Vercel KV — 10 min TTL
         await redisSet(`session:${session.toUpperCase()}`, JSON.stringify(tokens), 600);
 
         console.log('[callback] Tokens stored for session', session);
